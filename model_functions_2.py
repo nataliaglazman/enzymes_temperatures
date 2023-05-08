@@ -9,10 +9,10 @@ Created on Tue Apr 18 15:41:54 2023
 import pandas as pd
 import numpy as np
 from scipy.optimize import curve_fit
-from scipy.optimize import least_squares
+from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
-from IPython.display import set_matplotlib_formats
 from matplotlib.pyplot import figure
+from IPython.display import set_matplotlib_formats
 from sklearn.utils import resample as bootstrap
 import csv
 set_matplotlib_formats('svg')
@@ -20,9 +20,9 @@ set_matplotlib_formats('svg')
 
 
 #Import data
-file_name = '/Users/nataliaglazman/Library/Mobile Documents/com~apple~CloudDocs/Desktop/FYP/Database.csv'
+data_file_name = '/Users/nataliaglazman/Library/Mobile Documents/com~apple~CloudDocs/Desktop/FYP/Database.csv'
 
-data = pd.read_csv(file_name).dropna(axis =1)
+data = pd.read_csv(data_file_name)
 
 data = data.loc[:,['originalid','originaltraitvalue','interactor1',
             'interactor1wholeparttype','interactor1temp',
@@ -36,7 +36,13 @@ data['tempkelvin'] = data['interactor1temp'] + 273.15
 id_list = data.originalid.unique()
 organism_list = data.interactor1.unique()
 
-#Define set parameters and model function
+optimal_growth_temp_name = '/Users/nataliaglazman/Library/Mobile Documents/com~apple~CloudDocs/Desktop/FYP/optimal_growth_temp.csv'
+
+optimal_growth_temp = pd.read_csv(optimal_growth_temp_name)
+optimal_growth_temp = optimal_growth_temp.loc[:,['organism', 'optmumgrowthtemp']]
+
+
+#Define set parameters
 
 h = 6.62607015e-34
 kB = 1.380649e-23
@@ -47,6 +53,7 @@ R = 8.314
 
 Topt_dictionary = {}
 Topt_estim_dictionary = {}
+organism_enzyme_dict = {}
 Tinf_dictionary = {}
 parameter_list = []
 RSS = []
@@ -57,13 +64,17 @@ def fit_model(data, plot_data, bootstrapping):
     figure(figsize=(12, 10), dpi=3000)
     
     
-    for index, i in enumerate(id_list[0:4]):
+    for index, i in enumerate(id_list):
         
         
         data_set = data.loc[data['originalid'] == i]
         T0 = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()] - 4
         tmin = data_set['tempkelvin'].min() 
         tmax = data_set['tempkelvin'].max()
+        organisme = data_set['interactor1'].iloc[0]
+        organism_enzyme_dict[i] = optimal_growth_temp.optmumgrowthtemp.loc[optimal_growth_temp.organism == organisme].array[0]
+        
+        
         dt = 0.5
         t=np.arange(tmin, tmax, dt)
         
@@ -85,17 +96,24 @@ def fit_model(data, plot_data, bootstrapping):
         
         Topt = (pfit[0] - (pfit[1]*T0))/(-pfit[1]-R)
         Topt_estim = T0-(pfit[0]/pfit[1])
-        Topt_dictionary[i] = Topt
-        Topt_estim_dictionary[i] = Topt_estim
         Tinf = (pfit[0] - (pfit[1]*T0))/(-pfit[1]+np.sqrt(-pfit[1]*R))
-        Tinf_dictionary[i] = Tinf
+        
+        
+        #Converting kelving to celsius
+        
         Topt = Topt-273.15
         Tinf = Tinf-273.15
         Topt_estim = Topt_estim - 273.15
-    
-    
         
         
+        #Adding parameters to dictionary
+        
+        Tinf_dictionary[i] = Tinf
+        Topt_dictionary[i] = Topt
+        Topt_estim_dictionary[i] = Topt_estim
+    
+    
+    
         #Plot model and data if needed
         
         
@@ -142,26 +160,34 @@ def fit_model(data, plot_data, bootstrapping):
         
         plt.rcParams['figure.dpi'] = 2000
         plt.rcParams['savefig.dpi'] = 2000
-        plt.suptitle('Hobbs et al. model fit with bootstrapping', fontsize = 25)
+        plt.suptitle('Hobbs et al. model fit', fontsize = 25)
         plt.tight_layout()
         plt.show()
 
 
 
         
-fit_model(data[0:32], plot_data = True, bootstrapping = False)
+fit_model(data, plot_data = False, bootstrapping = False)
+
+Topt_data = pd.DataFrame.from_dict(Topt_dictionary, orient = 'index')
+Tinf_data = pd.DataFrame.from_dict(Tinf_dictionary, orient = 'index')
+optgrowth_data = pd.DataFrame.from_dict(organism_enzyme_dict, orient = 'index')
 
 
 
+#Plotting relationship between topt and optimal growth temp
+
+figure(figsize=(8, 7), dpi=3000)
+plt.scatter(Topt_data[0:18], Topt_data.index[0:18], label = 'Topt')
+plt.scatter(Tinf_data[0:18], Tinf_data.index[0:18], label = 'Tinf')
+plt.axvline(x = 30, linestyle = 'dashed')
+plt.legend()
+plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
+plt.ylabel('Enzyme ID', fontsize = 13, fontweight = 'bold')
+plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of Bacillus subtilis', fontsize = 15, fontweight = 'bold')
+plt.show()
 
 
-
-
-
-# with open('Topt.csv', 'w') as f: 
-#      w = csv.DictWriter(f, Topt_dictionary.keys())
-#      w.writeheader()
-#      w.writerow(Topt_dictionary)
     
     
     
