@@ -9,12 +9,11 @@ Created on Tue Apr 18 15:41:54 2023
 import pandas as pd
 import numpy as np
 from scipy.optimize import curve_fit
-from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
 from IPython.display import set_matplotlib_formats
 from sklearn.utils import resample as bootstrap
-import csv
+from scipy.stats.distributions import  t
 set_matplotlib_formats('svg')
 
 
@@ -64,7 +63,7 @@ def fit_model(data, plot_data, bootstrapping):
     figure(figsize=(12, 10), dpi=3000)
     
     
-    for index, i in enumerate(id_list):
+    for index, i in enumerate(id_list[48:52]):
         
         
         data_set = data.loc[data['originalid'] == i]
@@ -76,7 +75,7 @@ def fit_model(data, plot_data, bootstrapping):
         
         
         dt = 0.5
-        t=np.arange(tmin, tmax, dt)
+        temp=np.arange(tmin, tmax, dt)
         
         
         #Defining the model
@@ -92,7 +91,18 @@ def fit_model(data, plot_data, bootstrapping):
         
         pfit, pcov = curve_fit(model_log,data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
         
-        sigma_ab = np.sqrt(np.diagonal(pcov))
+        sigma_ab = np.diagonal(pcov)**0.5
+        
+        y = model_log(temp, *pfit)
+        
+        alpha = 0.05 # 95% confidence interval
+        N = len(y)
+        P = len(pfit)
+        dof = max(0,N-P)
+        ## dof is the degrees of freedom
+        
+        tval = t.ppf((1 - alpha / 2), dof)
+
         
         Topt = (pfit[0] - (pfit[1]*T0))/(-pfit[1]-R)
         Topt_estim = T0-(pfit[0]/pfit[1])
@@ -119,17 +129,16 @@ def fit_model(data, plot_data, bootstrapping):
         
         if plot_data == True:
     
-            y = model_log(t, *pfit)
 
             y_true = data_set['originaltraitvalue']
             t_true = data_set['tempkelvin']
-            bound_upper = model_log(t_true, *(pfit + sigma_ab))
-            bound_lower = model_log(t_true, *(pfit - sigma_ab))
+            bound_upper = model_log(t_true, *(pfit + sigma_ab*tval))
+            bound_lower = model_log(t_true, *(pfit - sigma_ab*tval))
             
-            t = t-273.15
+            temp = temp-273.15
         
             plt.subplot(2, 2, index+1)
-            plt.plot(t, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+            plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
             plt.plot(data_set['interactor1temp'], data_set['originaltraitvalue'], 'o', label='data', markersize = 5.5, color = 'r')
             plt.fill_between(t_true-273, bound_lower, bound_upper,
                      color = 'black', alpha = 0.15, edgecolor = 'black')
@@ -167,7 +176,7 @@ def fit_model(data, plot_data, bootstrapping):
 
 
         
-fit_model(data, plot_data = False, bootstrapping = False)
+fit_model(data[391:434], plot_data = True, bootstrapping = False)
 
 Topt_data = pd.DataFrame.from_dict(Topt_dictionary, orient = 'index')
 Tinf_data = pd.DataFrame.from_dict(Tinf_dictionary, orient = 'index')
@@ -177,15 +186,18 @@ optgrowth_data = pd.DataFrame.from_dict(organism_enzyme_dict, orient = 'index')
 
 #Plotting relationship between topt and optimal growth temp
 
-figure(figsize=(8, 7), dpi=3000)
-plt.scatter(Topt_data[0:18], Topt_data.index[0:18], label = 'Topt')
-plt.scatter(Tinf_data[0:18], Tinf_data.index[0:18], label = 'Tinf')
-plt.axvline(x = 30, linestyle = 'dashed')
-plt.legend()
-plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
-plt.ylabel('Enzyme ID', fontsize = 13, fontweight = 'bold')
-plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of Bacillus subtilis', fontsize = 15, fontweight = 'bold')
-plt.show()
+def plot_comparison():
+    figure(figsize=(8, 7), dpi=3000)
+    plt.scatter(Topt_data[45:50], Topt_data.index[45:50], label = 'Topt')
+    plt.scatter(Tinf_data[45:50], Tinf_data.index[45:50], label = 'Tinf')
+    plt.axvline(x = 15, linestyle = 'dashed')
+    plt.legend()
+    plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
+    plt.ylabel('Enzyme ID', fontsize = 13, fontweight = 'bold')
+    plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of Psychrobacter sp. ANT206', fontsize = 15, fontweight = 'bold')
+    plt.show()
+    
+#plot_comparison()
 
 
     
