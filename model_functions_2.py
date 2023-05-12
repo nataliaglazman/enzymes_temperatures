@@ -14,6 +14,8 @@ from matplotlib.pyplot import figure
 from IPython.display import set_matplotlib_formats
 from sklearn.utils import resample as bootstrap
 from scipy.stats.distributions import  t
+import lmfit
+from lmfit import Parameters
 set_matplotlib_formats('svg')
 
 
@@ -63,7 +65,7 @@ def fit_model(data, plot_data, bootstrapping):
     figure(figsize=(12, 10), dpi=3000)
     
     
-    for index, i in enumerate(id_list[48:52]):
+    for index, i in enumerate(id_list[4:8]):
         
         
         data_set = data.loc[data['originalid'] == i]
@@ -78,30 +80,59 @@ def fit_model(data, plot_data, bootstrapping):
         temp=np.arange(tmin, tmax, dt)
         
         
-        #Defining the model
         
-        def model_log(T, deltaH, deltaC, deltaS):
-            A = np.log((kB*T)/(h)) - ((deltaH + deltaC)*(T - T0))/(R * T) + ((deltaS + deltaC * np.log(T/T0))/R)
-            return np.exp(A)
+        #Defining the model1
+        
+        def model_exp(T, deltaH, deltaC, deltaS):
+            A = ((kB*T)/h) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
+            return A
         
         
+        def error_prop(T, diag_cov):
+            dH = -1/(R*T)
+            dC = (T-T0)/(R*T) + np.log(T/T0)/R
+            dS = 1/R
+            derivatives = np.array([dH, dC, dS])
+            variance = np.dot(diag_cov, derivatives**2) 
+            return np.sqrt(variance)
         
         #Fit model to data and get estimates for Topt and Tinf
         
+        pfit, pcov = curve_fit(model_exp,data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
+        sigma_ab = np.diagonal(pcov)
         
-        pfit, pcov = curve_fit(model_log,data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
+
+        y = model_exp(temp, *pfit)
         
-        sigma_ab = np.diagonal(pcov)**0.5
+        yerr = error_prop(temp, sigma_ab)
+        print(yerr)
         
-        y = model_log(temp, *pfit)
+        
+        
+        
         
         alpha = 0.05 # 95% confidence interval
         N = len(y)
         P = len(pfit)
         dof = max(0,N-P)
-        ## dof is the degrees of freedom
+        # dof is the degrees of freedom
         
         tval = t.ppf((1 - alpha / 2), dof)
+
+        
+        
+        # pars = Parameters()
+        # pars.add('deltaH', value=-300, min=-100000, max=100)
+        # pars.add('deltaC', value = -100, min=-100000, max=100)
+        # pars.add('deltaS', value = 1, min=-100, max=100)
+        # model = lmfit.Model(model_exp)
+
+        # result = model.fit(data_set['originaltraitvalue'], pars, T=data_set['tempkelvin'])
+        # print(result.fit_report())
+
+        # # now calculate explicit 1-, 2, and 3-sigma uncertainties:
+        # ci = result.conf_interval(sigmas=[1,2,3])
+        # lmfit.printfuncs.report_ci(ci)
 
         
         Topt = (pfit[0] - (pfit[1]*T0))/(-pfit[1]-R)
@@ -121,27 +152,27 @@ def fit_model(data, plot_data, bootstrapping):
         Tinf_dictionary[i] = Tinf
         Topt_dictionary[i] = Topt
         Topt_estim_dictionary[i] = Topt_estim
-    
+        
     
     
         #Plot model and data if needed
-        
         
         if plot_data == True:
     
 
             y_true = data_set['originaltraitvalue']
             t_true = data_set['tempkelvin']
-            bound_upper = model_log(t_true, *(pfit + sigma_ab*tval))
-            bound_lower = model_log(t_true, *(pfit - sigma_ab*tval))
+            #bound_upper = model_exp(t_true, *(pfit + sigma_ab*tval))
+            #bound_lower = model_exp(t_true, *(pfit - sigma_ab*tval))
             
             temp = temp-273.15
         
             plt.subplot(2, 2, index+1)
             plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
             plt.plot(data_set['interactor1temp'], data_set['originaltraitvalue'], 'o', label='data', markersize = 5.5, color = 'r')
-            plt.fill_between(t_true-273, bound_lower, bound_upper,
-                     color = 'black', alpha = 0.15, edgecolor = 'black')
+            #plt.fill_between(t_true-273, bound_lower, bound_upper,
+            #         color = 'black', alpha = 0.15, edgecolor = 'black')
+            plt.fill_between(temp, y+yerr, y-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
         
             
             if bootstrapping == True:
@@ -151,8 +182,8 @@ def fit_model(data, plot_data, bootstrapping):
         
                 for b in range(nboot):
                     xb,yb = bootstrap(t_true,y_true)
-                    p0, cov = curve_fit(model_log, xb, yb)
-                    bspreds[b] = model_log(t_true,*p0)
+                    p0, cov = curve_fit(model_exp, xb, yb)
+                    bspreds[b] = model_exp(t_true,*p0)
                 
                 plt.plot(t_true, bspreds.T, color = 'C0', alpha = 0.05)
                 
@@ -176,7 +207,7 @@ def fit_model(data, plot_data, bootstrapping):
 
 
         
-fit_model(data[391:434], plot_data = True, bootstrapping = False)
+fit_model(data[32:68], plot_data = True, bootstrapping = False)
 
 Topt_data = pd.DataFrame.from_dict(Topt_dictionary, orient = 'index')
 Tinf_data = pd.DataFrame.from_dict(Tinf_dictionary, orient = 'index')
@@ -199,7 +230,8 @@ def plot_comparison():
     
 #plot_comparison()
 
-
+    
+    
     
     
     
