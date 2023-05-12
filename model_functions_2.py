@@ -62,14 +62,16 @@ RSS = []
 
 def fit_model(data, plot_data, bootstrapping):
     x0 = -100,1.3,-100
+    x1 = 1,1,1,1
     figure(figsize=(12, 10), dpi=3000)
     
     
-    for index, i in enumerate(id_list[4:8]):
+    for index, i in enumerate(id_list[0:4]):
         
         
         data_set = data.loc[data['originalid'] == i]
         T0 = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()] - 4
+        Tmax = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()]
         tmin = data_set['tempkelvin'].min() 
         tmax = data_set['tempkelvin'].max()
         organisme = data_set['interactor1'].iloc[0]
@@ -79,12 +81,17 @@ def fit_model(data, plot_data, bootstrapping):
         dt = 0.5
         temp=np.arange(tmin, tmax, dt)
         
+        t = data_set['tempkelvin'].array
         
         
         #Defining the model1
         
-        def model_exp(T, deltaH, deltaC, deltaS):
+        def model_Hobbs(T, deltaH, deltaC, deltaS):
             A = ((kB*T)/h) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
+            return A
+        
+        def model_EEAR(T, A0, Eb, EDH, EDC):
+            A = A0*np.exp(-Eb-(EDH*(1-T/T0)+(EDC*(T-T0-(T*np.log(T/T0))))))/kB*T
             return A
         
         
@@ -96,20 +103,37 @@ def fit_model(data, plot_data, bootstrapping):
             variance = np.dot(diag_cov, derivatives**2) 
             return np.sqrt(variance)
         
+        def calculate_sigma():
+            diff = []
+            for i in range(len(t)-1):
+                           
+               diff.append(t[i+1] - t[i])
+               
+            
+            mean = sum(diff)/len(diff)
+            sigma = (mean/Tmax) * data_set['originaltraitvalue']
+            
+            return sigma
+        
+        sigma = calculate_sigma()
+        print(sigma)
+        
         #Fit model to data and get estimates for Topt and Tinf
         
-        pfit, pcov = curve_fit(model_exp,data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
+        pfit, pcov = curve_fit(model_Hobbs, data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
         sigma_ab = np.diagonal(pcov)
         
-
-        y = model_exp(temp, *pfit)
+        pfit_2, pcov_2 = curve_fit(model_EEAR, data_set['tempkelvin'], data_set['originaltraitvalue'], sigma = sigma,  p0 = x1, method = 'trf', absolute_sigma=False)
+        
+        #sigma=0.01*np.ones(len(data_set['tempkelvin']))*data_set['originaltraitvalue']
+        #print(np.sqrt(np.diag(pcov_2)))
+        
+        y_2 = model_EEAR(temp, *pfit_2)
+        y = model_Hobbs(temp, *pfit)
         
         yerr = error_prop(temp, sigma_ab)
-        print(yerr)
         
-        
-        
-        
+    
         
         alpha = 0.05 # 95% confidence interval
         N = len(y)
@@ -117,7 +141,7 @@ def fit_model(data, plot_data, bootstrapping):
         dof = max(0,N-P)
         # dof is the degrees of freedom
         
-        tval = t.ppf((1 - alpha / 2), dof)
+        #tval = t.ppf((1 - alpha / 2), dof)
 
         
         
@@ -168,11 +192,11 @@ def fit_model(data, plot_data, bootstrapping):
             temp = temp-273.15
         
             plt.subplot(2, 2, index+1)
-            plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+            plt.plot(temp, y_2, label = 'model', linewidth = 2.5, color = 'limegreen')
             plt.plot(data_set['interactor1temp'], data_set['originaltraitvalue'], 'o', label='data', markersize = 5.5, color = 'r')
             #plt.fill_between(t_true-273, bound_lower, bound_upper,
             #         color = 'black', alpha = 0.15, edgecolor = 'black')
-            plt.fill_between(temp, y+yerr, y-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
+            #plt.fill_between(temp, y+yerr, y-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
         
             
             if bootstrapping == True:
@@ -182,8 +206,8 @@ def fit_model(data, plot_data, bootstrapping):
         
                 for b in range(nboot):
                     xb,yb = bootstrap(t_true,y_true)
-                    p0, cov = curve_fit(model_exp, xb, yb)
-                    bspreds[b] = model_exp(t_true,*p0)
+                    p0, cov = curve_fit(model_Hobbs, xb, yb)
+                    bspreds[b] = model_Hobbs(t_true,*p0)
                 
                 plt.plot(t_true, bspreds.T, color = 'C0', alpha = 0.05)
                 
@@ -207,7 +231,7 @@ def fit_model(data, plot_data, bootstrapping):
 
 
         
-fit_model(data[32:68], plot_data = True, bootstrapping = False)
+fit_model(data[0:31], plot_data = True, bootstrapping = False)
 
 Topt_data = pd.DataFrame.from_dict(Topt_dictionary, orient = 'index')
 Tinf_data = pd.DataFrame.from_dict(Tinf_dictionary, orient = 'index')
@@ -215,17 +239,20 @@ optgrowth_data = pd.DataFrame.from_dict(organism_enzyme_dict, orient = 'index')
 
 
 
+
+
 #Plotting relationship between topt and optimal growth temp
+
 
 def plot_comparison():
     figure(figsize=(8, 7), dpi=3000)
-    plt.scatter(Topt_data[45:50], Topt_data.index[45:50], label = 'Topt')
-    plt.scatter(Tinf_data[45:50], Tinf_data.index[45:50], label = 'Tinf')
-    plt.axvline(x = 15, linestyle = 'dashed')
+    plt.scatter(Topt_data[0:18], Topt_data.index[0:18], label = 'Topt')
+    plt.scatter(Tinf_data[0:18], Tinf_data.index[0:18], label = 'Tinf')
+    plt.axvline(x = 30, linestyle = 'dashed')
     plt.legend()
     plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
     plt.ylabel('Enzyme ID', fontsize = 13, fontweight = 'bold')
-    plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of Psychrobacter sp. ANT206', fontsize = 15, fontweight = 'bold')
+    plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of B. subtilis', fontsize = 15, fontweight = 'bold')
     plt.show()
     
 #plot_comparison()
