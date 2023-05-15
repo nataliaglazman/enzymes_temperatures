@@ -63,12 +63,12 @@ deltaS_error = []
         
 
 def fit_model(data, plot_data, bootstrapping):
-    x0 = -100,1.3,-100
+    x0 = 10, -100,1.3,-100
     #x1 = 1,1,1,1
     figure(figsize=(12, 10), dpi=3000)
     
     
-    for index, i in enumerate(id_list[0:4]):
+    for index, i in enumerate(id_list):
         
         
         data_set = data.loc[data['originalid'] == i]
@@ -92,8 +92,8 @@ def fit_model(data, plot_data, bootstrapping):
         
         #Defining the model
         
-        def model_Hobbs(T, deltaH, deltaC, deltaS):
-            A = ((kB*T)/(10000*h)) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
+        def model_Hobbs(T,p, deltaH, deltaC, deltaS):
+            A = ((kB*T)/(p*h)) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
             return A
         
         def model_EEAR(T, A0, Eb, EDH, EDC):
@@ -131,25 +131,25 @@ def fit_model(data, plot_data, bootstrapping):
         
         #Model fitting using curve fit
 
-        pfit, pcov = curve_fit(model_Hobbs, data_set['tempkelvin'], y_true, sigma = sigma, p0 = x0, method = 'lm')
+        pfit, pcov = curve_fit(model_Hobbs, data_set['tempkelvin'], y_true, p0 = x0, method = 'lm')
         
         y_model = model_Hobbs(temp, *pfit)
         
         
         sigma_parameters = np.diagonal(pcov)
 
-        yerr = propagate_errors(temp, sigma_parameters)
+        #yerr = propagate_errors(temp, sigma_parameters)
         
         
-        deltaH_list.append(pfit[0])
-        deltaC_list.append(pfit[1])
-        deltaS_list.append(pfit[2])
+        deltaH_list.append(pfit[1])
+        deltaC_list.append(pfit[2])
+        deltaS_list.append(pfit[3])
         
         sqrt_sigma_parameters = np.sqrt(sigma_parameters)
         
-        deltaH_error.append(sqrt_sigma_parameters[0])
-        deltaC_error.append(sqrt_sigma_parameters[1])
-        deltaS_error.append(sqrt_sigma_parameters[2])
+        deltaH_error.append(sqrt_sigma_parameters[1])
+        deltaC_error.append(sqrt_sigma_parameters[2])
+        deltaS_error.append(sqrt_sigma_parameters[3])
 
         
 
@@ -165,10 +165,10 @@ def fit_model(data, plot_data, bootstrapping):
 
 #Using Lmfit to fit the models 
         
-        # pars = Parameters()
-        # pars.add('deltaH', value=-1000, min=-1000000, max=1000000)
-        # pars.add('deltaC', value = -100000, min=-1000000, max=1)
-        # pars.add('deltaS', value = -100, min=-100000, max=100000)
+        pars = Parameters()
+        pars.add('deltaH', value=-1000, min=-1000000, max=1000000)
+        pars.add('deltaC', value= -10000, min=-10000, max=1)
+        pars.add('deltaS', value= -100, min=-10000, max=10000)
         
     
     
@@ -216,39 +216,41 @@ def fit_model(data, plot_data, bootstrapping):
         y_model_plot = y_model * 100
         
         if plot_data == True:
+            
+            if index in [0,1,2,3]:
     
-            bound_upper = model_Hobbs(t_true, *(pfit + sigma_parameters))
-            bound_lower = model_Hobbs(t_true, *(pfit - sigma_parameters))
+                bound_upper = model_Hobbs(t_true, *(pfit + sigma_parameters))
+                bound_lower = model_Hobbs(t_true, *(pfit - sigma_parameters))
             
-            temp = temp-273.15
+                temp = temp-273.15
         
-            plt.subplot(2, 2, index+1)
-            plt.plot(temp, y_model_plot, label = 'model', linewidth = 2.5, color = 'limegreen')
-            plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-            plt.fill_between(t_true-273.15, bound_lower, bound_upper,
-                     color = 'black', alpha = 0.15, edgecolor = 'black')
-            plt.fill_between(temp, y_model_plot+yerr, y_model_plot-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
+                plt.subplot(2, 2, index+1)
+                plt.plot(temp, y_model_plot, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
+                #plt.fill_between(t_true-273.15, bound_lower, bound_upper,
+                #        color = 'black', alpha = 0.15, edgecolor = 'black')
+                #plt.fill_between(temp, y_model_plot+yerr, y_model_plot-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
         
             
-            if bootstrapping == True:
+                if bootstrapping == True:
 
-                nboot = 100
-                bspreds = np.zeros((nboot, y_true.size))
+                    nboot = 100
+                    bspreds = np.zeros((nboot, y_true.size))
         
-                for b in range(nboot):
-                    xb,yb = bootstrap(t_true,y_true)
-                    p0, cov = curve_fit(model_Hobbs, xb, yb)
-                    bspreds[b] = model_Hobbs(t_true,*p0)
+                    for b in range(nboot):
+                        xb,yb = bootstrap(t_true,y_true)
+                        p0, cov = curve_fit(model_Hobbs, xb, yb)
+                        bspreds[b] = model_Hobbs(t_true,*p0)
                 
-                plt.plot(t_true, bspreds.T, color = 'C0', alpha = 0.05)
+                    plt.plot(t_true, bspreds.T, color = 'C0', alpha = 0.05)
                 
                 
-            plt.axvline(x = Topt, color = 'b', linestyle = 'dashed')
-            plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed')
-            plt.legend()
-            plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
-            plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
-            plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
+                #plt.axvline(x = Topt, color = 'b', linestyle = 'dashed')
+                #plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed')
+                plt.legend()
+                plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
+                plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
+                plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
         
         
     if plot_data == True:
@@ -262,7 +264,7 @@ def fit_model(data, plot_data, bootstrapping):
 
 
         
-fit_model(data[0:31], plot_data = True, bootstrapping = False)
+fit_model(data, plot_data = True, bootstrapping = False)
 
 Topt_data = pd.DataFrame.from_dict(Topt_dictionary, orient = 'index')
 Tinf_data = pd.DataFrame.from_dict(Tinf_dictionary, orient = 'index')
