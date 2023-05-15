@@ -20,6 +20,7 @@ set_matplotlib_formats('svg')
 
 
 
+
 #Import data
 data_file_name = '/Users/nataliaglazman/Library/Mobile Documents/com~apple~CloudDocs/Desktop/FYP/Database.csv'
 
@@ -37,10 +38,6 @@ data['tempkelvin'] = data['interactor1temp'] + 273.15
 id_list = data.originalid.unique()
 organism_list = data.interactor1.unique()
 
-optimal_growth_temp_name = '/Users/nataliaglazman/Library/Mobile Documents/com~apple~CloudDocs/Desktop/FYP/optimal_growth_temp.csv'
-
-optimal_growth_temp = pd.read_csv(optimal_growth_temp_name)
-optimal_growth_temp = optimal_growth_temp.loc[:,['organism', 'optmumgrowthtemp']]
 
 
 #Define set parameters
@@ -57,12 +54,17 @@ Topt_estim_dictionary = {}
 organism_enzyme_dict = {}
 Tinf_dictionary = {}
 parameter_list = []
-RSS = []
+deltaH_list = []
+deltaC_list = []
+deltaS_list = []
+deltaH_error = []
+deltaC_error = []
+deltaS_error = []
         
 
 def fit_model(data, plot_data, bootstrapping):
     x0 = -100,1.3,-100
-    x1 = 1,1,1,1
+    #x1 = 1,1,1,1
     figure(figsize=(12, 10), dpi=3000)
     
     
@@ -74,20 +76,24 @@ def fit_model(data, plot_data, bootstrapping):
         Tmax = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()]
         tmin = data_set['tempkelvin'].min() 
         tmax = data_set['tempkelvin'].max()
-        organisme = data_set['interactor1'].iloc[0]
-        organism_enzyme_dict[i] = optimal_growth_temp.optmumgrowthtemp.loc[optimal_growth_temp.organism == organisme].array[0]
         
+        #Convert relative activity from a percentage to a decimal
+        y_true = data_set['originaltraitvalue']/100
+
         
+        #Create a fake temperature parameter for model plots
         dt = 0.5
         temp=np.arange(tmin, tmax, dt)
         
-        t = data_set['tempkelvin'].array
+        
+        t_true = data_set['tempkelvin'].array
         
         
-        #Defining the model1
+        
+        #Defining the model
         
         def model_Hobbs(T, deltaH, deltaC, deltaS):
-            A = ((kB*T)/h) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
+            A = ((kB*T)/(10000*h)) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
             return A
         
         def model_EEAR(T, A0, Eb, EDH, EDC):
@@ -95,7 +101,10 @@ def fit_model(data, plot_data, bootstrapping):
             return A
         
         
-        def error_prop(T, diag_cov):
+        
+        #Error propagation and error calculation functions
+    
+        def propagate_errors(T, diag_cov):
             dH = -1/(R*T)
             dC = (T-T0)/(R*T) + np.log(T/T0)/R
             dS = 1/R
@@ -103,68 +112,90 @@ def fit_model(data, plot_data, bootstrapping):
             variance = np.dot(diag_cov, derivatives**2) 
             return np.sqrt(variance)
         
+        
         def calculate_sigma():
             diff = []
-            for i in range(len(t)-1):
+            for i in range(len(t_true)-1):
                            
-               diff.append(t[i+1] - t[i])
+               diff.append(t_true[i+1] - t_true[i])
                
-            
             mean = sum(diff)/len(diff)
             sigma = (mean/Tmax) * data_set['originaltraitvalue']
             
             return sigma
         
+        
         sigma = calculate_sigma()
-        print(sigma)
         
-        #Fit model to data and get estimates for Topt and Tinf
         
-        pfit, pcov = curve_fit(model_Hobbs, data_set['tempkelvin'], data_set['originaltraitvalue'],  p0 = x0, method = 'trf')
-        sigma_ab = np.diagonal(pcov)
         
-        pfit_2, pcov_2 = curve_fit(model_EEAR, data_set['tempkelvin'], data_set['originaltraitvalue'], sigma = sigma,  p0 = x1, method = 'trf', absolute_sigma=False)
+        #Model fitting using curve fit
+
+        pfit, pcov = curve_fit(model_Hobbs, data_set['tempkelvin'], y_true, sigma = sigma, p0 = x0, method = 'lm')
         
-        #sigma=0.01*np.ones(len(data_set['tempkelvin']))*data_set['originaltraitvalue']
-        #print(np.sqrt(np.diag(pcov_2)))
+        y_model = model_Hobbs(temp, *pfit)
         
-        y_2 = model_EEAR(temp, *pfit_2)
-        y = model_Hobbs(temp, *pfit)
         
-        yerr = error_prop(temp, sigma_ab)
+        sigma_parameters = np.diagonal(pcov)
+
+        yerr = propagate_errors(temp, sigma_parameters)
+        
+        
+        deltaH_list.append(pfit[0])
+        deltaC_list.append(pfit[1])
+        deltaS_list.append(pfit[2])
+        
+        sqrt_sigma_parameters = np.sqrt(sigma_parameters)
+        
+        deltaH_error.append(sqrt_sigma_parameters[0])
+        deltaC_error.append(sqrt_sigma_parameters[1])
+        deltaS_error.append(sqrt_sigma_parameters[2])
+
+        
+
+        
+        ###TEST OF AN ALTERNATIVE MODEL
+        #pfit_2, pcov_2 = curve_fit(model_EEAR, data_set['tempkelvin'], y_true,  p0 = x1, method = 'lm')
+
+        
+        #y_2 = model_EEAR(temp, *pfit_2)
+        
         
     
-        
-        alpha = 0.05 # 95% confidence interval
-        N = len(y)
-        P = len(pfit)
-        dof = max(0,N-P)
-        # dof is the degrees of freedom
-        
-        #tval = t.ppf((1 - alpha / 2), dof)
 
-        
+#Using Lmfit to fit the models 
         
         # pars = Parameters()
-        # pars.add('deltaH', value=-300, min=-100000, max=100)
-        # pars.add('deltaC', value = -100, min=-100000, max=100)
-        # pars.add('deltaS', value = 1, min=-100, max=100)
-        # model = lmfit.Model(model_exp)
+        # pars.add('deltaH', value=-1000, min=-1000000, max=1000000)
+        # pars.add('deltaC', value = -100000, min=-1000000, max=1)
+        # pars.add('deltaS', value = -100, min=-100000, max=100000)
+        
+    
+    
+        # model = lmfit.Model(model_Hobbs)
+        
 
-        # result = model.fit(data_set['originaltraitvalue'], pars, T=data_set['tempkelvin'])
+        # result = model.fit(y_true, T=data_set['tempkelvin'], params = pars, weights = 1/sigma)
         # print(result.fit_report())
 
-        # # now calculate explicit 1-, 2, and 3-sigma uncertainties:
-        # ci = result.conf_interval(sigmas=[1,2,3])
-        # lmfit.printfuncs.report_ci(ci)
+        # #now calculate explicit 1-, 2, and 3-sigma uncertainties:
+        # try:
+        #     ci = result.conf_interval(sigmas=[1,2,3])
+        #     lmfit.printfuncs.report_ci(ci)
+        # except:
+        #     print('error')
+        
+        
+        
 
+#Estimation of Topt and Tinf parameters
         
         Topt = (pfit[0] - (pfit[1]*T0))/(-pfit[1]-R)
         Topt_estim = T0-(pfit[0]/pfit[1])
         Tinf = (pfit[0] - (pfit[1]*T0))/(-pfit[1]+np.sqrt(-pfit[1]*R))
         
         
-        #Converting kelving to celsius
+        #Converting kelvin to celsius
         
         Topt = Topt-273.15
         Tinf = Tinf-273.15
@@ -177,26 +208,26 @@ def fit_model(data, plot_data, bootstrapping):
         Topt_dictionary[i] = Topt
         Topt_estim_dictionary[i] = Topt_estim
         
-    
+        
+        
     
         #Plot model and data if needed
         
+        y_model_plot = y_model * 100
+        
         if plot_data == True:
     
-
-            y_true = data_set['originaltraitvalue']
-            t_true = data_set['tempkelvin']
-            #bound_upper = model_exp(t_true, *(pfit + sigma_ab*tval))
-            #bound_lower = model_exp(t_true, *(pfit - sigma_ab*tval))
+            bound_upper = model_Hobbs(t_true, *(pfit + sigma_parameters))
+            bound_lower = model_Hobbs(t_true, *(pfit - sigma_parameters))
             
             temp = temp-273.15
         
             plt.subplot(2, 2, index+1)
-            plt.plot(temp, y_2, label = 'model', linewidth = 2.5, color = 'limegreen')
-            plt.plot(data_set['interactor1temp'], data_set['originaltraitvalue'], 'o', label='data', markersize = 5.5, color = 'r')
-            #plt.fill_between(t_true-273, bound_lower, bound_upper,
-            #         color = 'black', alpha = 0.15, edgecolor = 'black')
-            #plt.fill_between(temp, y+yerr, y-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
+            plt.plot(temp, y_model_plot, label = 'model', linewidth = 2.5, color = 'limegreen')
+            plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
+            plt.fill_between(t_true-273.15, bound_lower, bound_upper,
+                     color = 'black', alpha = 0.15, edgecolor = 'black')
+            plt.fill_between(temp, y_model_plot+yerr, y_model_plot-yerr, color = 'black', alpha = 0.1, edgecolor = 'black')
         
             
             if bootstrapping == True:
@@ -241,8 +272,7 @@ optgrowth_data = pd.DataFrame.from_dict(organism_enzyme_dict, orient = 'index')
 
 
 
-#Plotting relationship between topt and optimal growth temp
-
+#Plotting relationship between Topt and optimal growth temp for each organism
 
 def plot_comparison():
     figure(figsize=(8, 7), dpi=3000)
@@ -257,7 +287,14 @@ def plot_comparison():
     
 #plot_comparison()
 
-    
+
+#Create dataframe for optimal parameter values and their condifence intervals
+# parameters = pd.DataFrame(deltaH_list, index=id_list, columns = ['deltaH'])
+# parameters['deltaC'] = deltaC_list
+# parameters['deltaS'] = deltaS_list
+# parameters['deltaHposerror'] = deltaH_error
+# parameters['deltaCposerror'] = deltaC_error
+# parameters['deltaSposerror'] = deltaS_error
     
     
     
