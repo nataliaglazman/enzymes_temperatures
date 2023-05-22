@@ -17,7 +17,7 @@ import lmfit
 from lmfit import Model
 from statsmodels.graphics.gofplots import qqplot
 from scipy.stats import shapiro
-import scipy.stats as st
+from scipy.stats import chisquare
 from scipy.stats.distributions import t
 
 set_matplotlib_formats('svg')
@@ -28,7 +28,7 @@ data_file_name = 'Database_v2.csv'
 
 data = pd.read_csv(data_file_name)
 
-data = data.loc[:,['originalid','originaltraitvalue','interactor1','interactor1temp',
+data = data.loc[:,['originalid', 'originaltraitname','originaltraitvalue','interactor1','interactor1temp',
             'interactor1species']]
 
 data['log_activity'] = data['originaltraitvalue'].apply(lambda x: np.log(x) if x != 0 else x)
@@ -61,7 +61,39 @@ deltaH_error = []
 deltaC_error = []
 deltaS_error = []
 enzymes_with_nonnormal_errors = []
+
         
+
+        
+        
+#Error propagation and error calculation functions
+def propagate_errors(T,T0, diag_cov):
+    dH = -1/(R*T)
+    dC = (T-T0)/(R*T) + np.log(T/T0)/R
+    dS = 1/R
+    #dp = -1/p
+    derivatives = np.array([dH, dC, dS])
+    variance = np.dot(diag_cov, derivatives**2) 
+    return np.sqrt(variance) 
+
+def propagate_errors_2(T, T0, diag_cov, A0):
+    dA0 = 1/A0
+    dEb = -1/(kB*T)
+    dEDH = (1-(T/T0))/(kB*T)
+    dEDC = (T-T0-(T*np.log(T/T0)))/(kB*T)
+    derivatives = np.array([dEb, dEDH, dEDC, dA0])
+    variance = np.dot(diag_cov, derivatives**2)
+    return np.sqrt(variance)
+        
+        
+def test_error_normality(i, y_true, y_predicted):
+    residuals = y_true-y_predicted
+    stat, p = shapiro(residuals)
+    alpha = 0.05
+    if p <= alpha:
+        enzymes_with_nonnormal_errors.append(i)
+        
+
 
 def fit_model(data, plot_data, bootstrapping):
     x0 = -100,1.3,-100
@@ -71,99 +103,77 @@ def fit_model(data, plot_data, bootstrapping):
     
     for index, i in enumerate(id_list):
         
-        
-        data_set = data.loc[data['originalid'] == i]
-        T0 = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()] + 4
-        Tmax = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()]
-        tmin = data_set['tempkelvin'].min() 
-        tmax = data_set['tempkelvin'].max()
-        
-        #Convert relative activity to a decimal
-        y_true = data_set['originaltraitvalue']
-
-        
-        #Create a fake temperature parameter for model plots
-        dt = 0.5
-        temp=np.arange(tmin, tmax, dt)
-        t_true = data_set['tempkelvin'].array
-        tm = 340
-        
-        #Defining the model
-        
         def model_Hobbs(T, deltaH, deltaC, deltaS):
             A = ((kB*T)/(h)) * np.exp(-((deltaH+(deltaC*(T-T0)))/(R*T)) + ((deltaS+(deltaC*np.log(T/T0)))/R))
             return A
-        
+                
         def model_EAAR(T, A0, eb, ef, ehc):  
             A = A0*np.exp(-((eb-(ef*(1-(T/T0)))+(ehc*(T-T0-(T*np.log(T/T0)))))/(k*T)))
             return A
         
-        
-        #Error propagation and error calculation functions
-    
-        def propagate_errors(T, diag_cov):
-            dH = -1/(R*T)
-            dC = (T-T0)/(R*T) + np.log(T/T0)/R
-            dS = 1/R
-            #dp = -1/p
-            derivatives = np.array([dH, dC, dS])
-            variance = np.dot(diag_cov, derivatives**2) 
-            return np.sqrt(variance)
-        
-        
-        def propagate_errors_2(T, diag_cov, A0):
-            dA0 = 1/A0
-            dEb = -1/(kB*T)
-            dEDH = (1-(T/T0))/(kB*T)
-            dEDC = (T-T0-(T*np.log(T/T0)))/(kB*T)
-            derivatives = np.array([dEb, dEDH, dEDC, dA0])
-            variance = np.dot(diag_cov, derivatives**2)
-            return np.sqrt(variance)
-        
-        
-        def test_error_normality():
-            residuals = y_true-y_predicted
-            stat, p = shapiro(residuals)
-            alpha = 0.05
-            if p <= alpha:
-                enzymes_with_nonnormal_errors.append(i)
+                
+        data_set = data.loc[data['originalid'] == i]
+        T0 = data_set['tempkelvin'].loc[data_set['originaltraitvalue'].idxmax()] + 4
+        tmin = data_set['tempkelvin'].min() 
+        tmax = data_set['tempkelvin'].max()
+                
+                
+        #Normalize non-relative data 
+        if data_set['originaltraitname'].array[0] != 'relative activity':
+            y_true = (data_set['originaltraitvalue'] - data_set['originaltraitvalue'].min()) / (data_set['originaltraitvalue'].max() - data_set['originaltraitvalue'].min())
+            y_true = y_true *100
+        else:
+            y_true = data_set['originaltraitvalue']
+                    
+            
+                
+        #Create a fake temperature parameter for model plots
+        dt = 0.5
+        temp=np.arange(tmin, tmax, dt)
+        t_true = data_set['tempkelvin'].array
             
         
-
         
         #Model fitting using curve fit
 
-        pfit, pcov = curve_fit(model_Hobbs, t_true, y_true, p0 = x0, method = 'lm')
+        pfit, pcov = curve_fit(model_Hobbs, t_true,  y_true, p0 = x0, method = 'lm')
         
         y_predicted = model_Hobbs(t_true, *pfit)
         y_model = model_Hobbs(temp, *pfit)
         
         
-        
         #Error estimation and propagation
-        test_error_normality()
+        test_error_normality(i, y_true, y_predicted)
         
-        sigma_parameters = np.sqrt(np.diagonal(pcov))
-        yerr = propagate_errors(temp, sigma_parameters)
-        yerr_up = y_model + yerr
-        yerr_down = y_model - yerr
-
-
-
+        sigma_parameters = np.diagonal(pcov)
+        yerr = propagate_errors(temp, T0, sigma_parameters)
+        # yerr_up = y_model + yerr
+        # yerr_down = y_model - yerr
+        y_true = data_set['originaltraitvalue'].array
+        chi_sqrt = 0
+        for i in range(len(y_true)):
+            chi_sqrt = chi_sqrt +  ((y_true[i] - y_predicted[i])**2)/y_predicted[i]
+        #chi_Hobbs = np.sqrt((y_true-y_predicted)**2/y_predicted)
+        #chi_Hobbs = chisquare(y_true, y_predicted)
+        
+        
+        print(chi_sqrt)
         
         ###TEST OF EAAR MODEL
         pfit_2, pcov_2 = curve_fit(model_EAAR, t_true, y_true, p0 = x1)
         
         y_2 = model_EAAR(temp, *pfit_2)
+        y_predicted_2 = model_EAAR(t_true, *pfit_2)
         sigma_2 = np.sqrt(np.diag(pcov_2))
+        #chi_EAAR = np.sqrt((y_true-y_predicted_2)/y_predicted_2)
         
         # yerr_up = model_EAAR(temp, *(pfit_2+sigma_2))
         
         # yerr_down = model_EAAR(temp, *(pfit_2-sigma_2))
         
-        # yerr2 = propagate_errors_2(temp, np.diag(pcov_2), pfit_2[0])
-        
-        #print(yerr2)
+        yerr2 = propagate_errors_2(temp, T0, np.diag(pcov_2), pfit_2[0])
+        yerr_up = y_2 + yerr2
+        yerr_down = y_2 - yerr2
         
         
 
@@ -212,7 +222,7 @@ def fit_model(data, plot_data, bootstrapping):
         
         if plot_data == True:
             
-            y = y_model
+            y = y_predicted
             
             temp = temp-273.15
             index_list = list(range(4, len(id_list), 5))
@@ -223,14 +233,17 @@ def fit_model(data, plot_data, bootstrapping):
             if index == 0:
                 
                 plt.subplot(2, 2, 1)
-                plt.plot(temp, y*100, label = 'model', linewidth = 2.5, color = 'limegreen')
-                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-                plt.fill_between(temp, yerr_up*100, yerr_down*100,
+                plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true, 'o', label='data', markersize = 5.5, color = 'r')
+                plt.fill_between(temp, yerr_up, yerr_down,
                        color = 'black', alpha = 0.15, edgecolor = 'black')
-                plt.legend()
+                
                 plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
                 plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
                 plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
+                plt.axvline(x = Topt, color = 'b', linestyle = 'dashed', label = 'Topt')
+                plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed', label = 'Tinf')
+                plt.legend()
             
             if index in index_list:
                 
@@ -241,54 +254,59 @@ def fit_model(data, plot_data, bootstrapping):
                 plt.tight_layout()
                 plt.show()
                 
-                figure(figsize=(12, 10), dpi=3000)
+                figure(figsize=(12, 10), dpi=4000)
                 plt.subplot(2, 2, 1)
-                plt.plot(temp, y*100, label = 'model', linewidth = 2.5, color = 'limegreen')
-                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-                plt.fill_between(temp, yerr_up*100, yerr_down*100,
+                plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true, 'o', label='data', markersize = 5.5, color = 'r')
+                plt.fill_between(temp, yerr_up, yerr_down,
                        color = 'black', alpha = 0.15, edgecolor = 'black')
-                plt.legend()
                 plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
                 plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
                 plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
+                plt.axvline(x = Topt, color = 'b', linestyle = 'dashed', label = 'Topt')
+                plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed', label = 'Tinf')
+                plt.legend()
                 
             elif index in index_list_2:
                 
                 plt.subplot(2,2,2)
-                plt.plot(temp, y*100, label = 'model', linewidth = 2.5, color = 'limegreen')
-                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-                plt.fill_between(temp, yerr_up*100, yerr_down*100,
+                plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true, 'o', label='data', markersize = 5.5, color = 'r')
+                plt.fill_between(temp, yerr_up, yerr_down,
                        color = 'black', alpha = 0.15, edgecolor = 'black')
-                plt.legend()
                 plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
                 plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
                 plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
+                plt.axvline(x = Topt, color = 'b', linestyle = 'dashed', label = 'Topt')
+                plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed', label = 'Tinf')
+                plt.legend()
                 
             elif index in index_list_3:
                 plt.subplot(2,2,3)
-                plt.plot(temp, y*100, label = 'model', linewidth = 2.5, color = 'limegreen')
-                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-                plt.fill_between(temp, yerr_up*100, yerr_down*100,
+                plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true, 'o', label='data', markersize = 5.5, color = 'r')
+                plt.fill_between(temp, yerr_up, yerr_down,
                        color = 'black', alpha = 0.15, edgecolor = 'black')
-                plt.legend()
                 plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
                 plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
                 plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
-                
+                plt.axvline(x = Topt, color = 'b', linestyle = 'dashed', label = 'Topt')
+                plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed', label = 'Tinf')
+                plt.legend()
                 
             elif index in index_list_4:
                 plt.subplot(2,2,4)
-                plt.plot(temp, y*100, label = 'model', linewidth = 2.5, color = 'limegreen')
-                plt.plot(data_set['interactor1temp'], y_true*100, 'o', label='data', markersize = 5.5, color = 'r')
-                plt.fill_between(temp, yerr_up*100, yerr_down*100,
+                plt.plot(temp, y, label = 'model', linewidth = 2.5, color = 'limegreen')
+                plt.plot(data_set['interactor1temp'], y_true, 'o', label='data', markersize = 5.5, color = 'r')
+                plt.fill_between(temp, yerr_up, yerr_down,
                        color = 'black', alpha = 0.15, edgecolor = 'black')
-                plt.legend()
                 plt.title(i[0:3], fontsize = 15, fontweight = 'bold')
                 plt.xlabel('Temperature (°C)', fontsize = 13, fontweight = 'bold')
                 plt.ylabel('Relative activity (%)', fontsize = 13, fontweight = 'bold')
-
-                
-                #plt.errorbar(data_set['interactor1temp'], y_true*100,sigma)
+                plt.axvline(x = Topt, color = 'b', linestyle = 'dashed', label = 'Topt')
+                plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed', label = 'Tinf')
+                plt.legend()
+            
                 
                 # if bootstrapping == True:
 
@@ -303,10 +321,6 @@ def fit_model(data, plot_data, bootstrapping):
                 #     plt.plot(t_true-273.15, bspreds.T*100, color = 'C0', alpha = 0.05)
                 
                 
-                #plt.axvline(x = Topt, color = 'b', linestyle = 'dashed')
-                #plt.axvline(x = Tinf, color = 'g', linestyle = 'dashed')
-        
-        
 
 
 
@@ -329,7 +343,7 @@ def plot_comparison():
     plt.title('Topt and Tinf comparison to optimal\n' + r'growth temperature of B. subtilis', fontsize = 15, fontweight = 'bold')
     plt.show()
     
-plot_comparison()
+#plot_comparison()
 
     
 
